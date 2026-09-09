@@ -1,0 +1,25 @@
+{
+  "output_path": "auto",
+  "live_sync": true,
+  "live_interval_seconds": 60,
+  "interval_seconds": 5,
+  "block_hours": 5,
+  "budget_metric": "total",
+  "retention_days": 32,
+  "idle_after_minutes": 20,
+  "limits": {
+    "session": "auto",
+    "week": "auto",
+    "fable": "auto"
+  },
+  "week_anchor": null,
+  "fable_prefixes": [
+    "claude-fable-",
+    "claude-mythos-"
+  ],
+  "auto_floor": {
+    "session": 2000000,
+    "week": 20000000,
+    "fable": 2000000
+  }
+}

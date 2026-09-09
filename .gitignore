@@ -1,0 +1,16 @@
+# Local usage data and personal settings
+state.json
+config.json
+.collector.lock
+
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
