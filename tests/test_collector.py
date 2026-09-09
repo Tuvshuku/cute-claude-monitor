@@ -100,7 +100,8 @@ class LiveUsageCacheTests(unittest.TestCase):
         self.assertIsNone(collector.cached_live_window(state, "week", now=2000))
 
     def test_snapshot_prefers_valid_last_live_reading_over_local_fallback(self):
-        now = 10_000.0
+        # Keep the fixture inside Windows' reliably supported local-time range.
+        now = 1_800_000_000.0
         state = collector.new_state()
         state["last_live"] = {
             "at": now - 120,
