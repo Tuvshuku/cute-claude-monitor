@@ -7,7 +7,9 @@
 # Drag it to move it. Right-click for the menu.
 
 param(
-    [string]$DataPath = "$env:USERPROFILE\.claude-widget\usage.json"
+    [string]$DataPath = "$env:USERPROFILE\.claude-widget\usage.json",
+    [switch]$NativeMode,
+    [string]$CollectorDataDir = ''
 )
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
@@ -814,10 +816,23 @@ $wanderItem = Add-MenuItem 'Let it wander' {
 $wanderItem.IsCheckable = $true
 Add-MenuItem 'Jump!' { Start-Jump } | Out-Null
 Add-MenuItem 'Refresh now' { Update-Widget } | Out-Null
-Add-MenuItem 'Calibrate limits...' {
-    Start-Process 'wsl.exe' -ArgumentList @('--', 'bash', '-lc',
-        'cd ~/cute.app && python3 collector.py --calibrate; echo; read -p "press enter to close"')
-} | Out-Null
+if ($NativeMode) {
+    Add-MenuItem 'Open collector settings' {
+        if ($CollectorDataDir -and (Test-Path -LiteralPath $CollectorDataDir)) {
+            Start-Process explorer.exe $CollectorDataDir
+        } else {
+            [System.Windows.MessageBox]::Show(
+                'The settings folder is created after the collector starts.',
+                'Cute Claude Monitor'
+            ) | Out-Null
+        }
+    } | Out-Null
+} else {
+    Add-MenuItem 'Calibrate limits...' {
+        Start-Process 'wsl.exe' -ArgumentList @('--', 'bash', '-lc',
+            'cd ~/cute.app && python3 collector.py --calibrate; echo; read -p "press enter to close"')
+    } | Out-Null
+}
 Add-MenuItem 'Open data folder' { Start-Process explorer.exe (Split-Path $script:DataPath -Parent) } | Out-Null
 $menu.Items.Add((New-Object System.Windows.Controls.Separator)) | Out-Null
 Add-MenuItem 'Quit' { $window.Close() } | Out-Null

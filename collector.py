@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-cute-claude-monitor — WSL-side collector.
+cute-claude-monitor — cross-platform Claude Code usage collector.
 
 Scans ~/.claude/projects/**/*.jsonl incrementally, aggregates token usage into
 hourly buckets, and writes a small JSON snapshot that the Windows widget reads.
@@ -34,7 +34,27 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-APP_DIR = Path(__file__).resolve().parent
+SOURCE_DIR = Path(__file__).resolve().parent
+IS_WINDOWS = os.name == "nt"
+
+
+def _runtime_data_dir() -> Path:
+    """Keep mutable data outside a one-file executable's temporary bundle."""
+    override = os.environ.get("CUTE_CLAUDE_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
+    if getattr(sys, "frozen", False):
+        if os.name == "nt":
+            root = Path(os.environ.get("LOCALAPPDATA", Path.home()))
+        elif sys.platform == "darwin":
+            root = Path.home() / "Library" / "Application Support"
+        else:
+            root = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+        return root / "CuteClaudeMonitor"
+    return SOURCE_DIR
+
+
+APP_DIR = _runtime_data_dir()
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
@@ -109,7 +129,9 @@ NFIELDS = 6  # input, output, cw5m, cw1h, cache_read, requests
 
 
 def log(msg: str) -> None:
-    print(f"[collector] {msg}", file=sys.stderr, flush=True)
+    # PyInstaller's windowed mode has no stderr stream.
+    if sys.stderr is not None:
+        print(f"[collector] {msg}", file=sys.stderr, flush=True)
 
 
 # --------------------------------------------------------------------------
@@ -192,18 +214,58 @@ def is_writable_dir(path: Path) -> bool:
 def resolve_output_path(cfg: dict) -> Path:
     configured = cfg.get("output_path", "auto")
     if configured and configured != "auto":
-        return Path(configured)
+        return Path(configured).expanduser()
+
+    # Native Windows: the widget and collector share the same user profile, so
+    # there is no path translation or profile scan to perform.
+    if IS_WINDOWS:
+        profile = Path(os.environ.get("USERPROFILE", Path.home()))
+        target = profile / ".claude-widget"
+        if is_writable_dir(target):
+            return target / "usage.json"
+
     ordered: list[Path] = []
-    from_interop = windows_profile_from_interop()
-    if from_interop is not None:
-        ordered.append(from_interop)
-    ordered.extend(p for p in windows_profile_candidates() if p != from_interop)
+    # Under WSL, discover the matching Windows profile. Other Unix-like hosts
+    # skip these probes and use their normal home directory below.
+    if Path("/mnt/c/Users").is_dir():
+        from_interop = windows_profile_from_interop()
+        if from_interop is not None:
+            ordered.append(from_interop)
+        ordered.extend(p for p in windows_profile_candidates() if p != from_interop)
     for profile in ordered:
         target = profile / ".claude-widget"
         if is_writable_dir(target):
             return target / "usage.json"
-    log("no writable Windows profile found; falling back to ~/.claude-widget")
+
+    if ordered:
+        log("no writable Windows profile found; falling back to ~/.claude-widget")
     return Path.home() / ".claude-widget" / "usage.json"
+
+
+_native_loop_lock = None
+
+
+def acquire_native_loop_lock() -> bool:
+    """Prevent duplicate native Windows collectors from rewriting one state file."""
+    global _native_loop_lock
+    if not IS_WINDOWS:
+        return True
+
+    import msvcrt
+
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    handle = (APP_DIR / ".collector.lock").open("a+b")
+    try:
+        if handle.seek(0, os.SEEK_END) == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        handle.close()
+        return False
+    _native_loop_lock = handle
+    return True
 
 
 def new_state() -> dict:
@@ -1167,6 +1229,10 @@ def main() -> int:
     args = parser.parse_args()
 
     cfg = load_config()
+
+    if args.loop and not acquire_native_loop_lock():
+        log("another collector is already running")
+        return 1
 
     if args.rebuild and STATE_PATH.exists():
         STATE_PATH.unlink()

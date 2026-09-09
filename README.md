@@ -1,8 +1,39 @@
 # cute-claude-monitor
 
-A small always-on-top Claude Code usage widget for the Windows desktop, fed by a
-collector that runs inside WSL. Tracks the same three windows as `/usage`:
+A small always-on-top Claude Code usage widget for the Windows desktop. The
+collector can run directly on Windows or inside WSL. It tracks the same three
+windows as `/usage`:
 **session** (5-hour block), **week**, and **fable** (weekly, Fable/Mythos-tier only).
+
+## Native Windows — easiest
+
+Download `CuteClaudeMonitor.exe` from the repository's **Releases** page and
+double-click it. It is a standalone app: Python and WSL are not required.
+
+Native mode reads Claude Code data from `%USERPROFILE%\.claude`, so Claude Code
+must be installed and logged in directly on Windows. Mutable state and the
+example configuration live in `%LOCALAPPDATA%\CuteClaudeMonitor`; the widget
+snapshot lives in `%USERPROFILE%\.claude-widget`.
+
+The executable is currently unsigned, so Windows SmartScreen may show an
+unrecognized-app warning on the first launch.
+
+### Run the source from Windows Terminal
+
+With Python 3 installed:
+
+```powershell
+git clone https://github.com/Tuvshuku/cute-claude-monitor.git
+cd cute-claude-monitor
+powershell -ExecutionPolicy Bypass -File .\run-windows.ps1
+```
+
+You can also double-click `Start-Windows.vbs` to launch the source version with
+no terminal window.
+
+## WSL setup
+
+Use this mode when Claude Code and its `.claude` data live inside WSL:
 
 ```
 WSL (kali-linux)                         Windows
@@ -16,14 +47,12 @@ WSL (kali-linux)                         Windows
                                         widget.ps1  (WPF card)
 ```
 
-The two halves only ever share one small JSON file, so there is no port, no
+The two WSL-mode halves only ever share one small JSON file, so there is no port, no
 firewall rule, and no WSL networking to configure.
 
-## Setup
-
 ```bash
-git clone https://github.com/Tuvshuku/cute-claude-monitor.git
-cd cute-claude-monitor
+git clone https://github.com/Tuvshuku/cute-claude-monitor.git ~/cute.app
+cd ~/cute.app
 ./install.sh                # copies widget.ps1 + Start-Widget.vbs to the Windows folder
 ./run-collector.sh          # leave running
 ```
@@ -126,7 +155,7 @@ statistics.
 
 Only these fields are persisted: percentage, reset boundary, display label,
 severity, plan name, and sync time. OAuth credentials and raw responses are not
-stored. The WSL state file is written owner-only (`0600`).
+stored. On POSIX systems, the state file is written owner-only (`0600`).
 
 To calibrate, run `/usage` in Claude Code, then feed the percentages it shows
 back in:
@@ -233,7 +262,7 @@ between runs, including positions on secondary monitors.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `output_path` | `"auto"` | Where to write the snapshot. `auto` asks Windows for `%USERPROFILE%` and falls back to scanning `/mnt/c/Users` for a writable profile. |
+| `output_path` | `"auto"` | Where to write the snapshot. Uses `%USERPROFILE%` on native Windows, the Windows profile from WSL, or `~/.claude-widget` elsewhere. |
 | `live_sync` | `true` | Read exact percentages from your account. Set `false` to stay fully local. |
 | `live_interval_seconds` | `60` | How often to poll the usage endpoint. |
 | `interval_seconds` | `5` | Collector pass interval. |
@@ -246,8 +275,21 @@ between runs, including positions on secondary monitors.
 | `retention_days` | `32` | How much transcript history to keep in the hourly rollup. |
 | `idle_after_minutes` | `20` | Silence before the bot goes to sleep. |
 
-Restart the collector after editing:
-`systemctl --user restart claude-usage-collector`
+Restart after editing: close and reopen the native Windows app, or run
+`systemctl --user restart claude-usage-collector` in WSL mode.
+
+## macOS and Linux
+
+The headless collector works anywhere Python 3 and Claude Code use the standard
+`~/.claude` directory:
+
+```bash
+python3 collector.py --loop
+```
+
+It writes `~/.claude-widget/usage.json`. The animated desktop pet is currently
+Windows-only because its interface uses WPF; a macOS/Linux interface would need
+a separate cross-platform UI.
 
 ## Collector CLI
 
@@ -338,9 +380,12 @@ Measured cost per frame: **0.17 ms** while dragging, 0.33 ms idle, against a
 
 | File | Runs on | Purpose |
 | --- | --- | --- |
-| `collector.py` | WSL | Scans transcripts, writes `usage.json` |
-| `config.json` | WSL | Collector settings and calibrated limits |
-| `state.json` | WSL | Read cursors + hourly rollup (generated) |
+| `collector.py` | All | Scans transcripts, writes `usage.json` |
+| `native_app.py` | Windows | Hosts the standalone collector + widget app |
+| `config.json` | All | Collector settings and calibrated limits |
+| `state.json` | All | Read cursors + hourly rollup (generated) |
+| `run-windows.ps1` | Windows | Runs source directly without WSL |
+| `Start-Windows.vbs` | Windows | Hidden launcher for native source mode |
 | `run-collector.sh` | WSL | Loop wrapper with a lock file |
 | `status.sh` | WSL | Health check for both halves, with fix commands |
 | `install.sh` | WSL | Copies the Windows half, optional autostart |

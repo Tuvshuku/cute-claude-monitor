@@ -156,6 +156,20 @@ class DayBoundsTests(unittest.TestCase):
             time.tzset()
 
 
+class OutputPathTests(unittest.TestCase):
+    def test_native_windows_auto_output_uses_user_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(collector, "IS_WINDOWS", True), patch.dict(
+                os.environ, {"USERPROFILE": tmp}
+            ):
+                path = collector.resolve_output_path({"output_path": "auto"})
+            self.assertEqual(path, Path(tmp) / ".claude-widget" / "usage.json")
+
+    def test_configured_output_path_expands_home(self):
+        path = collector.resolve_output_path({"output_path": "~/custom-usage.json"})
+        self.assertEqual(path, Path.home() / "custom-usage.json")
+
+
 class SecurityHardeningTests(unittest.TestCase):
     def test_authenticated_requests_never_follow_redirects(self):
         request = collector.urllib.request.Request(
@@ -178,6 +192,7 @@ class SecurityHardeningTests(unittest.TestCase):
         # important property is that no environment-backed proxy handler exists.
         self.assertEqual(proxy_handlers, [])
 
+    @unittest.skipIf(os.name == "nt", "Windows does not expose POSIX permission bits")
     def test_private_json_is_created_owner_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "state.json"
