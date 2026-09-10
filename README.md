@@ -1,19 +1,22 @@
-# cute-claude-monitor
+# claude-usage-bot
 
-A small always-on-top Claude Code usage widget for the Windows desktop. The
+A friendly always-on-top Claude Code usage bot for the Windows desktop. The
 collector can run directly on Windows or inside WSL. It tracks the same three
 windows as `/usage`:
 **session** (5-hour block), **week**, and **fable** (weekly, Fable/Mythos-tier only).
 
 ## Native Windows — easiest
 
-Download `CuteClaudeMonitor.exe` from the repository's **Releases** page and
+Download `ClaudeUsageBot.exe` from the repository's **Releases** page and
 double-click it. It is a standalone app: Python and WSL are not required.
 
 Native mode reads Claude Code data from `%USERPROFILE%\.claude`, so Claude Code
 must be installed and logged in directly on Windows. Mutable state and the
-example configuration live in `%LOCALAPPDATA%\CuteClaudeMonitor`; the widget
+example configuration live in `%LOCALAPPDATA%\ClaudeUsageBot`; the widget
 snapshot lives in `%USERPROFILE%\.claude-widget`.
+
+Upgrades from the former Cute Claude Monitor name continue using its existing
+AppData folder automatically, so saved state and configuration are not lost.
 
 The executable is currently unsigned, so Windows SmartScreen may show an
 unrecognized-app warning on the first launch.
@@ -28,8 +31,8 @@ existing WSL installation, first run
 With Python 3 installed:
 
 ```powershell
-git clone https://github.com/Tuvshuku/cute-claude-monitor.git
-cd cute-claude-monitor
+git clone https://github.com/Tuvshuku/claude-usage-bot.git
+cd claude-usage-bot
 powershell -ExecutionPolicy Bypass -File .\run-windows.ps1
 ```
 
@@ -56,7 +59,7 @@ The two WSL-mode halves only ever share one small JSON file, so there is no port
 firewall rule, and no WSL networking to configure.
 
 ```bash
-git clone https://github.com/Tuvshuku/cute-claude-monitor.git ~/cute.app
+git clone https://github.com/Tuvshuku/claude-usage-bot.git ~/cute.app
 cd ~/cute.app
 ./install.sh                # copies widget.ps1 + Start-Widget.vbs to the Windows folder
 ./run-collector.sh          # leave running
@@ -397,3 +400,7 @@ Measured cost per frame: **0.17 ms** while dragging, 0.33 ms idle, against a
 | `install.sh` | WSL | Copies the Windows half, optional autostart |
 | `widget.ps1` | Windows | The WPF card |
 | `Start-Widget.vbs` | Windows | Wakes WSL, launches the widget with no console |
+
+## License
+
+[MIT](LICENSE) — use, modify, and share it with attribution.

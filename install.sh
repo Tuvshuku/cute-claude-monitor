@@ -67,7 +67,12 @@ WIN_DIR="$(wslpath -w "$TARGET_DIR")"
 if [[ $AUTOSTART -eq 1 ]]; then
     STARTUP="$(dirname "$TARGET_DIR")/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup"
     if [[ -d "$STARTUP" ]]; then
-        cp -f "$TARGET_DIR/Start-Widget.vbs" "$STARTUP/CuteClaudeWidget.vbs"
+        AUTOSTART_PATH="$STARTUP/ClaudeUsageBot.vbs"
+        LEGACY_AUTOSTART="$STARTUP/CuteClaudeWidget.vbs"
+        if [[ -f "$LEGACY_AUTOSTART" && ! -e "$AUTOSTART_PATH" ]]; then
+            mv "$LEGACY_AUTOSTART" "$AUTOSTART_PATH"
+        fi
+        cp -f "$TARGET_DIR/Start-Widget.vbs" "$AUTOSTART_PATH"
         echo "autostart    : installed to the Windows Startup folder"
     else
         echo "autostart    : SKIPPED (Startup folder not found at $STARTUP)"
@@ -79,7 +84,7 @@ if [[ $SERVICE -eq 1 ]]; then
     mkdir -p "$UNIT_DIR"
     cat > "$UNIT_DIR/claude-usage-collector.service" <<UNIT
 [Unit]
-Description=Claude Code usage collector (cute widget)
+Description=Claude Usage Bot collector
 
 [Service]
 Type=simple

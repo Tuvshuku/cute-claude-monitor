@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 trap {
     Add-Type -AssemblyName PresentationFramework
     [System.Windows.MessageBox]::Show(
-        $_.Exception.Message, 'Cute Claude Monitor', 'OK', 'Error'
+        $_.Exception.Message, 'Claude Usage Bot', 'OK', 'Error'
     ) | Out-Null
     exit 1
 }

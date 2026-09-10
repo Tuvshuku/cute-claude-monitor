@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-cute-claude-monitor — cross-platform Claude Code usage collector.
+claude-usage-bot — cross-platform Claude Code usage collector.
 
 Scans ~/.claude/projects/**/*.jsonl incrementally, aggregates token usage into
 hourly buckets, and writes a small JSON snapshot that the Windows widget reads.
@@ -42,17 +42,23 @@ IS_WINDOWS = os.name == "nt"
 
 def _runtime_data_dir() -> Path:
     """Keep mutable data outside a one-file executable's temporary bundle."""
-    override = os.environ.get("CUTE_CLAUDE_DATA_DIR")
+    override = (
+        os.environ.get("CLAUDE_USAGE_BOT_DATA_DIR")
+        or os.environ.get("CUTE_CLAUDE_DATA_DIR")
+    )
     if override:
         return Path(override).expanduser()
     if getattr(sys, "frozen", False):
-        if os.name == "nt":
+        if IS_WINDOWS:
             root = Path(os.environ.get("LOCALAPPDATA", Path.home()))
         elif sys.platform == "darwin":
             root = Path.home() / "Library" / "Application Support"
         else:
             root = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
-        return root / "CuteClaudeMonitor"
+        preferred = root / "ClaudeUsageBot"
+        legacy = root / "CuteClaudeMonitor"
+        # Existing installations keep their state and configuration in place.
+        return legacy if legacy.exists() and not preferred.exists() else preferred
     return SOURCE_DIR
 
 
@@ -761,7 +767,7 @@ def fetch_live_usage(cfg: dict, now: float) -> tuple[dict | None, str | None]:
             "Authorization": f"Bearer {token}",
             "anthropic-beta": OAUTH_BETA,
             "Accept": "application/json",
-            "User-Agent": "cute-claude-monitor",
+            "User-Agent": "claude-usage-bot",
         },
     )
     try:

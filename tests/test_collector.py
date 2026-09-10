@@ -186,6 +186,26 @@ class DayBoundsTests(unittest.TestCase):
 
 
 class OutputPathTests(unittest.TestCase):
+    def test_frozen_app_uses_new_data_dir_and_recognizes_legacy_dir(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            collector.sys, "frozen", True, create=True
+        ), patch.object(collector, "IS_WINDOWS", True), patch.dict(
+            os.environ,
+            {
+                "LOCALAPPDATA": tmp,
+                "CLAUDE_USAGE_BOT_DATA_DIR": "",
+                "CUTE_CLAUDE_DATA_DIR": "",
+            },
+            clear=False,
+        ):
+            root = Path(tmp)
+            self.assertEqual(
+                collector._runtime_data_dir(), root / "ClaudeUsageBot"
+            )
+            legacy = root / "CuteClaudeMonitor"
+            legacy.mkdir()
+            self.assertEqual(collector._runtime_data_dir(), legacy)
+
     def test_native_windows_auto_output_uses_user_profile(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(collector, "IS_WINDOWS", True), patch.dict(

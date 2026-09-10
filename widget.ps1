@@ -1,4 +1,4 @@
-# cute-claude-monitor -- Windows desktop pet + usage dashboard
+# claude-usage-bot -- Windows desktop pet + usage dashboard
 #
 #   powershell -ExecutionPolicy Bypass -File widget.ps1
 #
@@ -19,7 +19,8 @@ if ([string]::IsNullOrWhiteSpace($DataPath)) {
     $DataPath = Join-Path $env:USERPROFILE '.claude-widget\usage.json'
 }
 
-$script:SettingsPath = Join-Path $env:APPDATA 'CuteClaudeWidget\window.json'
+$script:SettingsPath = Join-Path $env:APPDATA 'ClaudeUsageBot\window.json'
+$script:LegacySettingsPath = Join-Path $env:APPDATA 'CuteClaudeWidget\window.json'
 $script:DataPath     = $DataPath
 $script:ExplorerPath = Join-Path $env:SystemRoot 'explorer.exe'
 $script:WslPath      = Join-Path $env:SystemRoot 'System32\wsl.exe'
@@ -70,7 +71,7 @@ $SPARK_1 = '#F2CDB9'
 $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Claude" SizeToContent="WidthAndHeight"
+        Title="Claude Usage Bot" SizeToContent="WidthAndHeight"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
         UseLayoutRounding="True" SnapsToDevicePixels="True"
@@ -733,6 +734,14 @@ function Save-Settings {
 }
 function Restore-Settings {
     try {
+        if ((-not (Test-Path -LiteralPath $script:SettingsPath)) -and
+            (Test-Path -LiteralPath $script:LegacySettingsPath)) {
+            $dir = Split-Path $script:SettingsPath -Parent
+            if (-not (Test-Path -LiteralPath $dir)) {
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+            }
+            Copy-Item -LiteralPath $script:LegacySettingsPath -Destination $script:SettingsPath
+        }
         if (Test-Path -LiteralPath $script:SettingsPath) {
             $s = Get-Content -LiteralPath $script:SettingsPath -Raw | ConvertFrom-Json
             # Saved WPF coordinates use the virtual desktop, which includes
@@ -825,7 +834,7 @@ if ($NativeMode) {
         } else {
             [System.Windows.MessageBox]::Show(
                 'The settings folder is created after the collector starts.',
-                'Cute Claude Monitor'
+                'Claude Usage Bot'
             ) | Out-Null
         }
     } | Out-Null

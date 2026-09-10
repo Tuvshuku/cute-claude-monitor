@@ -15,7 +15,7 @@ from pathlib import Path
 import collector
 
 
-APP_TITLE = "Cute Claude Monitor"
+APP_TITLE = "Claude Usage Bot"
 
 
 def bundled_asset(name: str) -> Path:
@@ -73,7 +73,7 @@ def main() -> int:
     try:
         if not collector.acquire_native_loop_lock():
             show_error(
-                "Cute Claude Monitor is already running, or its data folder "
+                "Claude Usage Bot is already running, or its data folder "
                 "is not writable."
             )
             return 1
@@ -85,7 +85,7 @@ def main() -> int:
         widget_process = launch_widget(output_path)
         interval = max(float(cfg["interval_seconds"]), 1.0)
     except Exception as exc:
-        show_error(f"Cute Claude Monitor could not start.\n\n{exc}")
+        show_error(f"Claude Usage Bot could not start.\n\n{exc}")
         return 1
 
     next_pass = time.monotonic() + interval

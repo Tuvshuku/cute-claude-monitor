@@ -16,7 +16,7 @@ wsl = fso.BuildPath(windowsDir, "System32\wsl.exe")
 powershell = fso.BuildPath(windowsDir, "System32\WindowsPowerShell\v1.0\powershell.exe")
 
 If Not fso.FileExists(ps1) Then
-    MsgBox "widget.ps1 not found next to this launcher:" & vbCrLf & ps1, 16, "Cute Claude Widget"
+    MsgBox "widget.ps1 not found next to this launcher:" & vbCrLf & ps1, 16, "Claude Usage Bot"
     WScript.Quit 1
 End If
 
