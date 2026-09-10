@@ -21,7 +21,10 @@ if ([string]::IsNullOrWhiteSpace($DataPath)) {
 
 $script:SettingsPath = Join-Path $env:APPDATA 'CuteClaudeWidget\window.json'
 $script:DataPath     = $DataPath
+$script:ExplorerPath = Join-Path $env:SystemRoot 'explorer.exe'
+$script:WslPath      = Join-Path $env:SystemRoot 'System32\wsl.exe'
 $script:Snapshot     = $null
+$script:LastError    = $null
 $script:Mood         = ''
 $script:BodyHex      = ''
 $script:Open         = $false
@@ -444,7 +447,7 @@ function Set-Gauge([int]$i, $g, $accent, [double]$elapsed = 0) {
     $pctTb.Text = ('{0}{1:N0}%{2}' -f $prefix, ($pct * 100), $suffix)
     $pctTb.Foreground = ConvertTo-Brush (Get-Level $pct).B
 
-    if ($g.resets_in -ne $null)  { $resTb.Text = Format-Duration ([double]$g.resets_in - $elapsed) }
+    if ($null -ne $g.resets_in)  { $resTb.Text = Format-Duration ([double]$g.resets_in - $elapsed) }
     elseif ($g.id -eq 'session') { $resTb.Text = 'ready' }
     else                         { $resTb.Text = 'rolling' }
 }
@@ -493,7 +496,7 @@ function Update-Widget {
         if ($interactionAwake) {
             $ui.StatusText.Text = 'awake'
             $ui.Subtitle.Text = 'woken up by you'
-        } elseif ($snap.idle_seconds -ne $null) {
+        } elseif ($null -ne $snap.idle_seconds) {
             $ui.StatusText.Text = 'idle'
             $ui.Subtitle.Text = ('resting for {0}' -f (Format-Duration ([double]$snap.idle_seconds)))
         } else {
@@ -638,7 +641,7 @@ function Step-Motion {
             $ui.LegT2.Y = -$s; $ui.LegT3.Y = $s
             $ui.BotHop.Y = -[Math]::Abs([Math]::Sin($phase)) * 1.6
 
-            if (($script:TargetX -ne $null -and
+            if (($null -ne $script:TargetX -and
                  [Math]::Abs(($window.Left - $script:TargetX)) -lt 5) -or $script:Tick -ge $script:NextAt) {
                 $script:State = 'idle'; Reset-Pose
                 $script:NextAt = $script:Tick + (Get-Random -Minimum 30 -Maximum 90)
@@ -726,7 +729,7 @@ function Save-Settings {
             Left = $window.Left; Top = $window.Top
             Open = $script:Open; Wander = $script:Wander
         } | ConvertTo-Json | Set-Content -LiteralPath $script:SettingsPath -Encoding UTF8
-    } catch { }
+    } catch { $script:LastError = $_ }
 }
 function Restore-Settings {
     try {
@@ -738,25 +741,25 @@ function Restore-Settings {
             $vTop = [System.Windows.SystemParameters]::VirtualScreenTop
             $vRight = $vLeft + [System.Windows.SystemParameters]::VirtualScreenWidth
             $vBottom = $vTop + [System.Windows.SystemParameters]::VirtualScreenHeight
-            if ($s.Left -ne $null) {
+            if ($null -ne $s.Left) {
                 $left = [double]$s.Left
                 if (-not [double]::IsNaN($left) -and -not [double]::IsInfinity($left) -and
                     $left -ge ($vLeft - 40) -and $left -lt $vRight) {
                     $window.Left = $left
                 }
             }
-            if ($s.Top -ne $null) {
+            if ($null -ne $s.Top) {
                 $top = [double]$s.Top
                 if (-not [double]::IsNaN($top) -and -not [double]::IsInfinity($top) -and
                     $top -ge ($vTop - 40) -and $top -lt $vBottom) {
                     $window.Top = $top
                 }
             }
-            if ($s.Wander -ne $null) { $script:Wander = [bool]$s.Wander }
+            if ($null -ne $s.Wander) { $script:Wander = [bool]$s.Wander }
             if ($s.Open) { Set-Dashboard $true }
             return $true
         }
-    } catch { }
+    } catch { $script:LastError = $_ }
     return $false
 }
 
@@ -766,13 +769,12 @@ function Restore-Settings {
 # DispatcherTimers keep firing inside that loop, so the flail still animates.
 # ---------------------------------------------------------------------------
 $ui.Root.Add_MouseLeftButtonDown({
-    param($s, $e)
     $startL = $window.Left
     $startT = $window.Top
     $script:LastX = $window.Left
     $script:Dragging = $true
     Set-Eyes 'happy'
-    try { $window.DragMove() } catch { }
+    try { $window.DragMove() } catch { $script:LastError = $_ }
     $script:Dragging = $false
 
     Reset-Pose
@@ -819,7 +821,7 @@ Add-MenuItem 'Refresh now' { Update-Widget } | Out-Null
 if ($NativeMode) {
     Add-MenuItem 'Open collector settings' {
         if ($CollectorDataDir -and (Test-Path -LiteralPath $CollectorDataDir)) {
-            Start-Process explorer.exe $CollectorDataDir
+            Start-Process $script:ExplorerPath $CollectorDataDir
         } else {
             [System.Windows.MessageBox]::Show(
                 'The settings folder is created after the collector starts.',
@@ -829,11 +831,11 @@ if ($NativeMode) {
     } | Out-Null
 } else {
     Add-MenuItem 'Calibrate limits...' {
-        Start-Process 'wsl.exe' -ArgumentList @('--', 'bash', '-lc',
+        Start-Process $script:WslPath -ArgumentList @('--', 'bash', '-lc',
             'cd ~/cute.app && python3 collector.py --calibrate; echo; read -p "press enter to close"')
     } | Out-Null
 }
-Add-MenuItem 'Open data folder' { Start-Process explorer.exe (Split-Path $script:DataPath -Parent) } | Out-Null
+Add-MenuItem 'Open data folder' { Start-Process $script:ExplorerPath (Split-Path $script:DataPath -Parent) } | Out-Null
 $menu.Items.Add((New-Object System.Windows.Controls.Separator)) | Out-Null
 Add-MenuItem 'Quit' { $window.Close() } | Out-Null
 $menu.Add_Opened({ $wanderItem.IsChecked = $script:Wander })

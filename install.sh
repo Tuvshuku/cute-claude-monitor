@@ -51,6 +51,14 @@ cp -f widget.ps1 "$TARGET_DIR/"
 
 # Bake the distro name into the launcher so it can wake WSL at sign-in.
 DISTRO="${WSL_DISTRO_NAME:-}"
+case "$DISTRO" in
+    ""|*[!A-Za-z0-9._-]*)
+        if [[ -n "$DISTRO" ]]; then
+            echo "launcher     : distro name has unsupported characters; using the WSL default"
+        fi
+        DISTRO=""
+        ;;
+esac
 sed "s/__WSL_DISTRO__/${DISTRO}/" Start-Widget.vbs > "$TARGET_DIR/Start-Widget.vbs"
 echo "copied       : widget.ps1, Start-Widget.vbs (distro: ${DISTRO:-<default>})"
 
@@ -87,6 +95,13 @@ UNIT
     systemctl --user enable --now claude-usage-collector.service
     echo "service      : claude-usage-collector.service enabled and started"
     echo "               (logs: journalctl --user -u claude-usage-collector -f)"
+    if [[ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != "yes" ]]; then
+        if loginctl enable-linger "$USER"; then
+            echo "linger       : enabled (collector can start before a WSL shell opens)"
+        else
+            echo "linger       : WARNING: could not enable it; run: loginctl enable-linger $USER"
+        fi
+    fi
 fi
 
 cat <<EOF

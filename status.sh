@@ -4,7 +4,7 @@
 set -uo pipefail
 
 APP_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-cd "$APP_DIR"
+cd "$APP_DIR" || exit 1
 
 ok()   { printf '  \033[32m OK \033[0m %s\n' "$1"; }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; FAILED=1; }

@@ -25,9 +25,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -150,6 +152,78 @@ def load_config() -> dict:
                     cfg[key] = value
         except Exception as exc:
             log(f"config.json unreadable ({exc}); using defaults")
+    return validate_config(cfg)
+
+
+def _config_number(cfg: dict, key: str, minimum: float) -> float:
+    default = float(DEFAULT_CONFIG[key])
+    value = cfg.get(key)
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        number = math.nan
+    if isinstance(value, bool) or not math.isfinite(number) or number < minimum:
+        log(f"config {key!r} is invalid; using {DEFAULT_CONFIG[key]!r}")
+        return default
+    return number
+
+
+def _positive_setting(value, default):
+    if value == "auto":
+        return "auto"
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if isinstance(value, bool) or not math.isfinite(number) or number <= 0:
+        return default
+    return int(number)
+
+
+def validate_config(cfg: dict) -> dict:
+    """Normalize user-edited settings so a typo cannot stop the collector."""
+    if not isinstance(cfg.get("output_path"), str) or not cfg["output_path"].strip():
+        cfg["output_path"] = DEFAULT_CONFIG["output_path"]
+    if not isinstance(cfg.get("live_sync"), bool):
+        cfg["live_sync"] = DEFAULT_CONFIG["live_sync"]
+
+    cfg["live_interval_seconds"] = _config_number(cfg, "live_interval_seconds", 15)
+    cfg["interval_seconds"] = _config_number(cfg, "interval_seconds", 1)
+    cfg["block_hours"] = _config_number(cfg, "block_hours", 0.01)
+    cfg["retention_days"] = _config_number(cfg, "retention_days", 1)
+    cfg["idle_after_minutes"] = _config_number(cfg, "idle_after_minutes", 0)
+
+    if cfg.get("budget_metric") not in {"total", "billable", "output"}:
+        cfg["budget_metric"] = DEFAULT_CONFIG["budget_metric"]
+
+    raw_limits = cfg.get("limits")
+    if not isinstance(raw_limits, dict):
+        raw_limits = {}
+    cfg["limits"] = {
+        name: _positive_setting(raw_limits.get(name, "auto"), "auto")
+        for name in ("session", "week", "fable")
+    }
+
+    raw_floors = cfg.get("auto_floor")
+    if not isinstance(raw_floors, dict):
+        raw_floors = {}
+    cfg["auto_floor"] = {
+        name: _positive_setting(
+            raw_floors.get(name), DEFAULT_CONFIG["auto_floor"][name]
+        )
+        for name in ("session", "week", "fable")
+    }
+
+    prefixes = cfg.get("fable_prefixes")
+    if not isinstance(prefixes, list) or not all(
+        isinstance(item, str) and item for item in prefixes
+    ):
+        cfg["fable_prefixes"] = list(DEFAULT_CONFIG["fable_prefixes"])
+
+    anchor = cfg.get("week_anchor")
+    if anchor is not None and parse_timestamp(anchor) is None:
+        log("config 'week_anchor' is invalid; using a rolling week")
+        cfg["week_anchor"] = None
     return cfg
 
 
@@ -159,18 +233,25 @@ def save_config(cfg: dict) -> None:
 
 def windows_profile_from_interop() -> Path | None:
     """Ask Windows for %USERPROFILE% and translate it to a WSL path."""
-    import subprocess
+    # Both executables are fixed absolute paths and shell mode is never used.
+    import subprocess  # nosec B404
+
+    cmd = Path("/mnt/c/Windows/System32/cmd.exe")
+    wslpath = Path("/usr/bin/wslpath")
+    if not cmd.is_file() or not wslpath.is_file():
+        return None
 
     try:
         raw = subprocess.run(
-            ["cmd.exe", "/c", "echo %USERPROFILE%"],
+            [str(cmd), "/c", "echo %USERPROFILE%"],
             capture_output=True, text=True, timeout=15,
             cwd="/",  # avoids the "UNC paths are not supported" warning
         ).stdout.strip()
         if not raw or "%" in raw:
             return None
         translated = subprocess.run(
-            ["wslpath", "-u", raw], capture_output=True, text=True, timeout=15
+            [str(wslpath), "-u", raw],
+            capture_output=True, text=True, timeout=15,
         ).stdout.strip()
         return Path(translated) if translated else None
     except (OSError, subprocess.SubprocessError):
@@ -203,9 +284,10 @@ def is_writable_dir(path: Path) -> bool:
     """Probe by actually writing — os.access lies on DrvFs."""
     try:
         path.mkdir(parents=True, exist_ok=True)
-        probe = path / ".write-probe"
-        probe.write_text("ok")
-        probe.unlink()
+        # A unique temporary file avoids overwriting a user's similarly named
+        # file and is removed automatically on both Windows and POSIX.
+        with tempfile.NamedTemporaryFile(prefix=".write-probe-", dir=path):
+            pass
         return True
     except OSError:
         return False
@@ -253,16 +335,18 @@ def acquire_native_loop_lock() -> bool:
 
     import msvcrt
 
-    APP_DIR.mkdir(parents=True, exist_ok=True)
-    handle = (APP_DIR / ".collector.lock").open("a+b")
+    handle = None
     try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        handle = (APP_DIR / ".collector.lock").open("a+b")
         if handle.seek(0, os.SEEK_END) == 0:
             handle.write(b"\0")
             handle.flush()
         handle.seek(0)
         msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
     except OSError:
-        handle.close()
+        if handle is not None:
+            handle.close()
         return False
     _native_loop_lock = handle
     return True
@@ -285,6 +369,7 @@ def new_state() -> dict:
         # Sanitized account percentages from the last successful live poll.
         # OAuth credentials and the raw response are never persisted.
         "last_live": None,
+        "implied_limits": {},
     }
 
 
@@ -293,9 +378,27 @@ def load_state() -> dict:
         try:
             state = json.loads(STATE_PATH.read_text())
             if state.get("version") == STATE_VERSION:
-                state.setdefault("limit_events", [])
-                state.setdefault("last_live", None)
-                return state
+                defaults = new_state()
+                expected = {
+                    "files": dict,
+                    "hours": dict,
+                    "recent": list,
+                    "seen": dict,
+                    "days": dict,
+                    "limit_events": list,
+                    "session_models": dict,
+                    "implied_limits": dict,
+                }
+                for key, default in defaults.items():
+                    state.setdefault(key, default)
+                if all(isinstance(state.get(key), kind) for key, kind in expected.items()):
+                    if state.get("last_live") is not None and not isinstance(
+                        state["last_live"], dict
+                    ):
+                        state["last_live"] = None
+                    return state
+                log("state structure is invalid; rebuilding")
+                return defaults
             log("state schema changed; rebuilding")
         except Exception as exc:
             log(f"state.json unreadable ({exc}); rebuilding")
@@ -311,7 +414,7 @@ def save_state(state: dict) -> None:
 def write_json_atomic(path: Path, payload: dict, indent: int | None = None,
                       mode: int | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     if indent:
         serialized = json.dumps(payload, indent=indent)
     else:
@@ -342,17 +445,25 @@ def write_json_atomic(path: Path, payload: dict, indent: int | None = None,
 # transcript parsing
 # --------------------------------------------------------------------------
 
-def parse_timestamp(raw: str) -> float | None:
-    if not raw:
+def parse_timestamp(raw) -> float | None:
+    if raw is None or isinstance(raw, bool):
         return None
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
-    except ValueError:
+        if isinstance(raw, (int, float)):
+            timestamp = float(raw)
+        elif isinstance(raw, str) and raw.strip():
+            timestamp = datetime.fromisoformat(
+                raw.strip().replace("Z", "+00:00")
+            ).timestamp()
+        else:
+            return None
+        return timestamp if math.isfinite(timestamp) else None
+    except (OSError, OverflowError, TypeError, ValueError):
         return None
 
 
 def normalize_model(raw: str) -> str:
-    model = (raw or "unknown").strip()
+    model = str(raw or "unknown").strip()
     # Claude Code surfaces context variants as "claude-opus-5[1m]".
     if "[" in model:
         model = model.split("[", 1)[0]
@@ -361,18 +472,30 @@ def normalize_model(raw: str) -> str:
     return model
 
 
+def _token_count(value) -> int:
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def extract_usage(record: dict):
     """Return (request_id, ts, key, [in, out, cw5, cw1h, cr], session_id) or None."""
+    if not isinstance(record, dict):
+        return None
     if record.get("type") != "assistant":
         return None
     message = record.get("message") or {}
+    if not isinstance(message, dict):
+        return None
     usage = message.get("usage")
     if not isinstance(usage, dict):
         return None
 
     request_id = record.get("requestId") or message.get("id")
-    if not request_id:
+    if not isinstance(request_id, (str, int)) or isinstance(request_id, bool):
         return None
+    request_id = str(request_id)
 
     ts = parse_timestamp(record.get("timestamp", ""))
     if ts is None:
@@ -382,23 +505,28 @@ def extract_usage(record: dict):
     if model.startswith("<"):
         return None  # "<synthetic>" placeholders are not real API calls
 
-    speed = usage.get("speed") or "standard"
+    speed = str(usage.get("speed") or "standard")
 
     creation = usage.get("cache_creation") or {}
-    cw5 = int(creation.get("ephemeral_5m_input_tokens") or 0)
-    cw1h = int(creation.get("ephemeral_1h_input_tokens") or 0)
+    if not isinstance(creation, dict):
+        creation = {}
+    cw5 = _token_count(creation.get("ephemeral_5m_input_tokens"))
+    cw1h = _token_count(creation.get("ephemeral_1h_input_tokens"))
     if cw5 == 0 and cw1h == 0:
         # Older transcripts only carry the aggregate; assume the 5m tier.
-        cw5 = int(usage.get("cache_creation_input_tokens") or 0)
+        cw5 = _token_count(usage.get("cache_creation_input_tokens"))
 
     counts = [
-        int(usage.get("input_tokens") or 0),
-        int(usage.get("output_tokens") or 0),
+        _token_count(usage.get("input_tokens")),
+        _token_count(usage.get("output_tokens")),
         cw5,
         cw1h,
-        int(usage.get("cache_read_input_tokens") or 0),
+        _token_count(usage.get("cache_read_input_tokens")),
     ]
-    return request_id, ts, f"{model}|{speed}", counts, record.get("sessionId")
+    session_id = record.get("sessionId")
+    if not isinstance(session_id, (str, int)) or isinstance(session_id, bool):
+        session_id = None
+    return request_id, ts, f"{model}|{speed}", counts, session_id
 
 
 def is_limit_event(raw: bytes, record: dict) -> bool:
@@ -466,12 +594,15 @@ def scan(state: dict, cfg: dict, now: float) -> int:
                 continue
             try:
                 record = json.loads(raw)
-            except Exception:
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                record = None
+            if not isinstance(record, dict):
                 continue
 
             if interesting_limit and is_limit_event(raw, record):
                 ts = parse_timestamp(record.get("timestamp", ""))
-                if ts and ts >= retention_cutoff and ts not in limit_events:
+                if (ts is not None and retention_cutoff <= ts <= now + DAY
+                        and ts not in limit_events):
                     limit_events.append(ts)
 
             if not interesting_usage:
@@ -480,6 +611,8 @@ def scan(state: dict, cfg: dict, now: float) -> int:
             if parsed is None:
                 continue
             request_id, ts, model_key, counts, session_id = parsed
+            if ts < 0 or ts > now + DAY:
+                continue
 
             # Claude Code writes the same requestId more than once per turn.
             if request_id in seen_run or request_id in seen_persisted:
@@ -612,9 +745,14 @@ def fetch_live_usage(cfg: dict, now: float) -> tuple[dict | None, str | None]:
         return None, _live_cache["error"]
 
     expires_at = oauth.get("expiresAt")
-    if expires_at and float(expires_at) / 1000.0 < now:
-        _live_cache["error"] = "token expired - run any Claude Code command to refresh"
-        return None, _live_cache["error"]
+    if expires_at:
+        try:
+            expired = float(expires_at) / 1000.0 < now
+        except (TypeError, ValueError, OverflowError):
+            expired = False
+        if expired:
+            _live_cache["error"] = "token expired - run any Claude Code command to refresh"
+            return None, _live_cache["error"]
 
     request = urllib.request.Request(
         LIVE_URL,
@@ -636,6 +774,10 @@ def fetch_live_usage(cfg: dict, now: float) -> tuple[dict | None, str | None]:
         _live_cache["error"] = type(exc).__name__
         return None, _live_cache["error"]
 
+    if not isinstance(payload, dict):
+        _live_cache["error"] = "invalid response"
+        return None, _live_cache["error"]
+
     _live_cache["data"] = payload
     _live_cache["error"] = None
     _live_cache["success_at"] = now
@@ -652,14 +794,22 @@ def _resets_in(resets_at, now: float) -> float | None:
                 target /= 1000.0
         else:
             target = parse_timestamp(str(resets_at))
-        return max(target - now, 0) if target else None
-    except (TypeError, ValueError):
+        return max(target - now, 0) if target and math.isfinite(target) else None
+    except (TypeError, ValueError, OverflowError):
         return None
+
+
+def _percentage(value) -> float | None:
+    try:
+        percent = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return percent / 100.0 if math.isfinite(percent) and percent >= 0 else None
 
 
 def live_window(payload: dict | None, gauge_id: str, now: float) -> dict | None:
     """Pull the live percentage, reset time and label for one gauge."""
-    if not payload:
+    if not isinstance(payload, dict) or not payload:
         return None
 
     entries = payload.get("limits")
@@ -668,8 +818,8 @@ def live_window(payload: dict | None, gauge_id: str, now: float) -> dict | None:
         for entry in entries:
             if not isinstance(entry, dict) or entry.get("kind") != wanted:
                 continue
-            percent = entry.get("percent")
-            if percent is None:
+            pct = _percentage(entry.get("percent"))
+            if pct is None:
                 continue
             label = None
             scope = entry.get("scope")
@@ -678,16 +828,17 @@ def live_window(payload: dict | None, gauge_id: str, now: float) -> dict | None:
                 if isinstance(model, dict) and model.get("display_name"):
                     label = str(model["display_name"]).lower()
             return {
-                "pct": float(percent) / 100.0,
+                "pct": pct,
                 "resets_in": _resets_in(entry.get("resets_at"), now),
                 "label": label,
                 "severity": entry.get("severity"),
             }
 
     block = payload.get(LIVE_LEGACY_KEYS.get(gauge_id, ""))
-    if isinstance(block, dict) and block.get("utilization") is not None:
+    pct = _percentage(block.get("utilization")) if isinstance(block, dict) else None
+    if isinstance(block, dict) and pct is not None:
         return {
-            "pct": float(block["utilization"]) / 100.0,
+            "pct": pct,
             "resets_in": _resets_in(block.get("resets_at"), now),
             "label": None,
             "severity": None,
@@ -732,6 +883,8 @@ def cached_live_window(state: dict, gauge_id: str, now: float) -> dict | None:
     cached = state.get("last_live") or {}
     try:
         age = max(now - float(cached["at"]), 0.0)
+        if not math.isfinite(age):
+            return None
         item = (cached.get("gauges") or {}).get(gauge_id)
         if not isinstance(item, dict):
             return None
@@ -739,20 +892,23 @@ def cached_live_window(state: dict, gauge_id: str, now: float) -> dict | None:
         resets_at = item.get("resets_at")
         if resets_at is not None:
             resets_in = float(resets_at) - now
-            if resets_in <= 0:
+            if not math.isfinite(resets_in) or resets_in <= 0:
                 return None  # never carry a percentage into its next cycle
         else:
             if age > DAY:
                 return None  # unbounded stale readings expire after one day
             resets_in = None
 
+        pct = float(item["pct"])
+        if not math.isfinite(pct) or pct < 0:
+            return None
         return {
-            "pct": float(item["pct"]),
+            "pct": pct,
             "resets_in": resets_in,
             "label": item.get("label"),
             "severity": item.get("severity"),
         }
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         return None
 
 
@@ -853,7 +1009,7 @@ def week_window(now: float, cfg: dict) -> tuple[float, float, float | None]:
     anchor_raw = cfg.get("week_anchor")
     if not anchor_raw:
         return now - WEEK, now + HOUR, None
-    anchor = parse_timestamp(anchor_raw) if isinstance(anchor_raw, str) else float(anchor_raw)
+    anchor = parse_timestamp(anchor_raw)
     if anchor is None:
         return now - WEEK, now + HOUR, None
     periods = (now - anchor) // WEEK
@@ -916,9 +1072,9 @@ def resolve_limit(cfg: dict, state: dict, name: str, auto_value: int) -> tuple[i
         return int(configured), "configured"
     # Limit implied by the last live reading, kept fresh so the offline
     # fallback reflects current conditions rather than a stale calibration.
-    implied = (state.get("implied_limits") or {}).get(name)
-    if implied:
-        return int(implied), "configured"
+    implied = _positive_setting((state.get("implied_limits") or {}).get(name), None)
+    if implied is not None and implied != "auto":
+        return implied, "configured"
     floor = (cfg.get("auto_floor") or {}).get(name, 1_000_000)
     return max(int(auto_value), int(floor)), "estimated"
 
@@ -1191,9 +1347,12 @@ def do_calibrate(state: dict, cfg: dict, args) -> int:
         used = metric_of(totals_of(w[name]["models"]), metric)
         pct = supplied[name]
         line = f"  {name:8} {humanize(used):>9} tokens used"
-        if pct:
-            if pct <= 0:
+        if pct is not None:
+            if not math.isfinite(pct) or pct <= 0:
                 print(line + "   (skipped: percentage must be > 0)")
+                continue
+            if used <= 0:
+                print(line + "   (skipped: no local usage to calibrate)")
                 continue
             derived = int(round(used / (pct / 100.0)))
             limits[name] = derived

@@ -18,6 +18,11 @@ snapshot lives in `%USERPROFILE%\.claude-widget`.
 The executable is currently unsigned, so Windows SmartScreen may show an
 unrecognized-app warning on the first launch.
 
+Run either native mode or WSL mode, not both: two collectors should not write
+the same `%USERPROFILE%\.claude-widget\usage.json` file. To switch from an
+existing WSL installation, first run
+`systemctl --user disable --now claude-usage-collector` inside WSL.
+
 ### Run the source from Windows Terminal
 
 With Python 3 installed:
@@ -77,7 +82,7 @@ To make both halves start on their own:
 - `--autostart` drops the launcher into the Windows Startup folder.
 
 Three things have to line up for the widget to be live right after you sign in,
-and the installer handles all of them:
+and the installer configures and checks all of them:
 
 1. **Windows starts the launcher** — the `.vbs` in the Startup folder.
 2. **The launcher starts WSL** — it fires `wsl.exe -d <distro> -e true` before
@@ -85,8 +90,8 @@ and the installer handles all of them:
    collector would never run. `install.sh` bakes your distro name into the copy.
 3. **WSL starts the collector** — the systemd user service, which needs
    `loginctl enable-linger <you>` so the user manager comes up at boot instead of
-   waiting for an interactive shell. Check with
-   `loginctl show-user $USER -p Linger --value`; enable it if it prints `no`.
+   waiting for an interactive shell. The installer enables this when possible
+   and prints a command to run if the system rejects the automatic change.
 
 WSL takes a few seconds to boot, so the card shows an `offline` badge briefly
 before going live.
@@ -165,7 +170,7 @@ python3 collector.py --calibrate --session 21 --week 58 --fable 4
 ```
 
 That divides your measured token totals by those percentages, writes the derived
-limits into `config.json`, and the `~` disappears. There is also a
+limits into `config.json`, and the `~` disappears. WSL mode also provides a
 **Calibrate limits…** item in the widget's right-click menu.
 
 Two tips:
@@ -240,7 +245,7 @@ out of it.
 | **Click the bot** | Pop the usage dashboard open, click again to fold it away |
 | **Hover over it** | It hops, with `>` `<` eyes (2s cooldown so brushing past won't make it pogo) |
 | **Drag it** | Carry it anywhere — it wakes up, squints happily, wiggles, and tilts into the motion |
-| Right-click | Dashboard, wander on/off, jump, refresh, calibrate, data folder, quit |
+| Right-click | Dashboard, wander on/off, jump, refresh, settings/calibration, data folder, quit |
 
 Left alone it wanders: strolls a short way (mirroring itself to face the
 direction it walks), stops to idle and breathe, and hops now and then — the
@@ -294,7 +299,8 @@ a separate cross-platform UI.
 ## Collector CLI
 
 ```bash
-python3 collector.py --once        # single pass, print the snapshot
+python3 collector.py --once        # single pass, write the snapshot
+python3 collector.py --print       # single pass, also print the snapshot
 python3 collector.py --loop        # daemon mode (what run-collector.sh uses)
 python3 collector.py --rebuild     # throw away state.json and rescan from disk
 python3 collector.py --calibrate   # show window totals; add --session/--week/--fable to save limits

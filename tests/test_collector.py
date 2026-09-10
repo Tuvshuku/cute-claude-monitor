@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -99,6 +100,33 @@ class LiveUsageCacheTests(unittest.TestCase):
         self.assertEqual(cached["resets_in"], 500)
         self.assertIsNone(collector.cached_live_window(state, "week", now=2000))
 
+    def test_invalid_live_payload_fails_closed(self):
+        original_credentials = collector.CREDENTIALS_PATH
+        original_cache = dict(collector._live_cache)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                credentials = Path(tmp) / "credentials.json"
+                credentials.write_text(json.dumps({
+                    "claudeAiOauth": {"accessToken": "test-token"},
+                }))
+                collector.CREDENTIALS_PATH = credentials
+                collector._live_cache.update(
+                    attempt_at=0.0, success_at=0.0, data=None, error=None
+                )
+                with patch.object(
+                    collector._LIVE_OPENER, "open", return_value=_Response([])
+                ):
+                    self.assertEqual(
+                        collector.fetch_live_usage(
+                            {"live_sync": True, "live_interval_seconds": 60}, 1000
+                        ),
+                        (None, "invalid response"),
+                    )
+        finally:
+            collector.CREDENTIALS_PATH = original_credentials
+            collector._live_cache.clear()
+            collector._live_cache.update(original_cache)
+
     def test_snapshot_prefers_valid_last_live_reading_over_local_fallback(self):
         # Keep the fixture inside Windows' reliably supported local-time range.
         now = 1_800_000_000.0
@@ -169,6 +197,115 @@ class OutputPathTests(unittest.TestCase):
     def test_configured_output_path_expands_home(self):
         path = collector.resolve_output_path({"output_path": "~/custom-usage.json"})
         self.assertEqual(path, Path.home() / "custom-usage.json")
+
+
+class InputHardeningTests(unittest.TestCase):
+    def test_invalid_config_values_fall_back_to_safe_defaults(self):
+        cfg = json.loads(json.dumps(collector.DEFAULT_CONFIG))
+        cfg.update({
+            "interval_seconds": "nan",
+            "block_hours": -1,
+            "retention_days": None,
+            "idle_after_minutes": [],
+            "budget_metric": "surprise",
+            "week_anchor": {"bad": True},
+            "fable_prefixes": [1, None],
+            "limits": {"session": -5, "week": "oops", "fable": "auto"},
+        })
+
+        validated = collector.validate_config(cfg)
+
+        self.assertEqual(validated["interval_seconds"], 5)
+        self.assertEqual(validated["block_hours"], 5)
+        self.assertEqual(validated["retention_days"], 32)
+        self.assertEqual(validated["idle_after_minutes"], 20)
+        self.assertEqual(validated["budget_metric"], "total")
+        self.assertIsNone(validated["week_anchor"])
+        self.assertEqual(validated["fable_prefixes"], collector.DEFAULT_CONFIG["fable_prefixes"])
+        self.assertEqual(validated["limits"], collector.DEFAULT_CONFIG["limits"])
+
+    def test_malformed_usage_fields_do_not_break_parsing(self):
+        parsed = collector.extract_usage({
+            "type": "assistant",
+            "requestId": 123,
+            "timestamp": 1_800_000_000,
+            "sessionId": {"not": "hashable"},
+            "message": {
+                "model": ["unexpected"],
+                "usage": {
+                    "input_tokens": "not-a-number",
+                    "output_tokens": -9,
+                    "cache_creation": "not-an-object",
+                    "cache_read_input_tokens": float("inf"),
+                },
+            },
+        })
+
+        self.assertIsNotNone(parsed)
+        request_id, timestamp, _model, counts, session_id = parsed
+        self.assertEqual(request_id, "123")
+        self.assertEqual(timestamp, 1_800_000_000)
+        self.assertEqual(counts, [0, 0, 0, 0, 0])
+        self.assertIsNone(session_id)
+
+    def test_scan_skips_bad_records_and_future_timestamps(self):
+        now = 1_800_000_000.0
+        valid_time = datetime.fromtimestamp(now - 60, timezone.utc).isoformat()
+        future_time = datetime.fromtimestamp(now + 2 * collector.DAY, timezone.utc).isoformat()
+        records = [
+            {"message": ["usage"]},
+            {
+                "type": "assistant", "requestId": "valid", "timestamp": valid_time,
+                "sessionId": "one", "message": {
+                    "model": "claude-test", "usage": {"input_tokens": 10},
+                },
+            },
+            {
+                "type": "assistant", "requestId": "bad-count", "timestamp": valid_time,
+                "message": {
+                    "model": "claude-test", "usage": {"output_tokens": "broken"},
+                },
+            },
+            {
+                "type": "assistant", "requestId": "future", "timestamp": future_time,
+                "message": {
+                    "model": "claude-test", "usage": {"input_tokens": 999},
+                },
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project_dir = Path(tmp)
+            transcript = project_dir / "session.jsonl"
+            transcript.write_text(
+                "\n".join(json.dumps(record) for record in records) + "\n"
+            )
+            os.utime(transcript, (now, now))
+            with patch.object(collector, "PROJECTS_DIR", project_dir):
+                state = collector.new_state()
+                added = collector.scan(
+                    state, json.loads(json.dumps(collector.DEFAULT_CONFIG)), now
+                )
+
+        self.assertEqual(added, 2)
+        self.assertEqual(len(state["recent"]), 2)
+        self.assertEqual(sum(entry[2] for entry in state["recent"]), 10)
+
+    def test_invalid_state_structure_is_rebuilt(self):
+        original_state_path = collector.STATE_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "state.json"
+                path.write_text(json.dumps({
+                    "version": collector.STATE_VERSION,
+                    "hours": [],
+                }))
+                collector.STATE_PATH = path
+                state = collector.load_state()
+                self.assertEqual(state["hours"], {})
+                self.assertEqual(state["version"], collector.STATE_VERSION)
+        finally:
+            collector.STATE_PATH = original_state_path
 
 
 class SecurityHardeningTests(unittest.TestCase):
