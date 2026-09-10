@@ -27,9 +27,10 @@ Only the bot is shown by default. Click it to unfold the dashboard.
 
 | Before clicking | After clicking |
 | :---: | :---: |
-| <img src="docs/images/bot-compact.png" alt="Claude Usage Bot in its compact desktop view" width="136"> | <img src="docs/images/bot-dashboard.png" alt="Claude Usage Bot with its usage dashboard expanded" width="380"> |
+| <a href="docs/images/bot-compact.png"><img src="docs/images/bot-compact.png" alt="Claude Usage Bot floating over a coding desktop" width="560"></a> | <a href="docs/images/bot-dashboard.png"><img src="docs/images/bot-dashboard.png" alt="Claude Usage Bot with its dashboard open over a coding desktop" width="560"></a> |
 
-*Screenshots use synthetic example data.*
+*Click either image for the full-size view. The desktop and usage values are
+privacy-safe example data.*
 
 | Action | Result |
 | --- | --- |
