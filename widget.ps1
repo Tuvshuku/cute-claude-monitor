@@ -841,7 +841,7 @@ if ($NativeMode) {
 } else {
     Add-MenuItem 'Calibrate limits...' {
         Start-Process $script:WslPath -ArgumentList @('--', 'bash', '-lc',
-            'cd ~/cute.app && python3 collector.py --calibrate; echo; read -p "press enter to close"')
+            'if [ -d ~/claude-usage-bot ]; then cd ~/claude-usage-bot; else cd ~/cute.app; fi && python3 collector.py --calibrate; echo; read -p "press enter to close"')
     } | Out-Null
 }
 Add-MenuItem 'Open data folder' { Start-Process $script:ExplorerPath (Split-Path $script:DataPath -Parent) } | Out-Null

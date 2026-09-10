@@ -1,14 +1,62 @@
 # claude-usage-bot
 
-A friendly always-on-top Claude Code usage monitoring bot for the Windows and Sub/linux desktop. The
-collector can run directly on Windows or inside WSL. It tracks the same three
-windows as `/usage`:
-**session** (5-hour block), **week**, and **fable** (weekly, Fable/Mythos-tier only).
+## Introduction
 
-## Native Windows — easiest
+claude-usage-bot is a small, open-source usage monitor for Claude Code. It
+supports native Windows and WSL setups, plus a headless collector for macOS and
+Linux. A pixel bot lives above your Windows desktop and opens an at-a-glance
+usage dashboard when clicked.
 
-Download `ClaudeUsageBot.exe` from the repository's **Releases** page and
-double-click it. It is a standalone app: Python and WSL are not required.
+It tracks the same three windows shown by Claude Code's `/usage` command:
+
+- **Session** — the current 5-hour usage block.
+- **Week** — usage across the current weekly window.
+- **Fable** — weekly Fable/Mythos-tier usage, when available on your plan.
+
+With live sync enabled, the percentages and reset times come from your Claude
+account. Local transcript analysis supplies the activity sparkline, token
+totals, burn rate, session count, and API-equivalent cost estimate.
+
+The complete desktop bot supports native Windows and WSL-based Claude Code
+setups. macOS and Linux can run the headless collector, but the animated WPF
+interface is currently Windows-only.
+
+## Using it
+
+Only the bot is shown by default. Click it to unfold the dashboard.
+
+| Before clicking | After clicking |
+| :---: | :---: |
+| <img src="docs/images/bot-compact.png" alt="Claude Usage Bot in its compact desktop view" width="136"> | <img src="docs/images/bot-dashboard.png" alt="Claude Usage Bot with its usage dashboard expanded" width="380"> |
+
+*Screenshots use synthetic example data.*
+
+| Action | Result |
+| --- | --- |
+| **Click the bot** | Open or fold away the usage dashboard |
+| **Hover over it** | Make it hop and smile |
+| **Drag it** | Move it anywhere on the desktop |
+| **Right-click it** | Open dashboard, movement, refresh, settings, data-folder, and quit controls |
+
+Left alone, the bot strolls, breathes, blinks, and occasionally hops. It stays
+still while the dashboard is open, or permanently when **Let it wander** is
+disabled from the right-click menu.
+
+Its colour and expression follow the highest usage gauge: Claude orange at low
+usage, amber as usage rises, and red near the limit. After a period without
+activity, it falls asleep. Window position, dashboard state, and the movement
+preference are remembered between launches and across secondary monitors.
+
+## Installation
+
+Choose the setup that matches where Claude Code stores its data. Do not run the
+native Windows and WSL collectors together because both would write the same
+widget snapshot.
+
+### Native Windows — recommended
+
+Download [ClaudeUsageBot.exe from the latest release](https://github.com/Tuvshuku/claude-usage-bot/releases/latest/download/ClaudeUsageBot.exe)
+and double-click it. It is a standalone app: Python and WSL are not required.
 
 Native mode reads Claude Code data from `%USERPROFILE%\.claude`, so Claude Code
 must be installed and logged in directly on Windows. Mutable state and the
@@ -21,12 +69,10 @@ AppData folder automatically, so saved state and configuration are not lost.
 The executable is currently unsigned, so Windows SmartScreen may show an
 unrecognized-app warning on the first launch.
 
-Run either native mode or WSL mode, not both: two collectors should not write
-the same `%USERPROFILE%\.claude-widget\usage.json` file. To switch from an
-existing WSL installation, first run
+To switch from an existing WSL installation, first run
 `systemctl --user disable --now claude-usage-collector` inside WSL.
 
-### Run the source from Windows Terminal
+#### Run from source in Windows Terminal
 
 With Python 3 installed:
 
@@ -39,7 +85,7 @@ powershell -ExecutionPolicy Bypass -File .\run-windows.ps1
 You can also double-click `Start-Windows.vbs` to launch the source version with
 no terminal window.
 
-## WSL setup
+### WSL
 
 Use this mode when Claude Code and its `.claude` data live inside WSL:
 
@@ -59,8 +105,8 @@ The two WSL-mode halves only ever share one small JSON file, so there is no port
 firewall rule, and no WSL networking to configure.
 
 ```bash
-git clone https://github.com/Tuvshuku/claude-usage-bot.git ~/cute.app
-cd ~/cute.app
+git clone https://github.com/Tuvshuku/claude-usage-bot.git ~/claude-usage-bot
+cd ~/claude-usage-bot
 ./install.sh                # copies widget.ps1 + Start-Widget.vbs to the Windows folder
 ./run-collector.sh          # leave running
 ```
@@ -99,13 +145,13 @@ and the installer configures and checks all of them:
 WSL takes a few seconds to boot, so the card shows an `offline` badge briefly
 before going live.
 
-### After a reboot
+#### After a reboot
 
 Nothing to do — signing in to Windows restarts both halves. If the card doesn't
 come back, run the health check; it prints the fix next to whatever failed:
 
 ```bash
-cd ~/cute.app && ./status.sh
+cd ~/claude-usage-bot && ./status.sh
 ```
 
 To start things by hand:
@@ -116,6 +162,21 @@ systemctl --user start claude-usage-collector     # collector
 
 and on Windows, open `C:\Users\<you>\.claude-widget\Start-Widget.vbs`
 (or press `Win+R` and paste `shell:startup` to reach the same launcher).
+
+### macOS and Linux — collector only
+
+The headless collector works anywhere Python 3 and Claude Code use the standard
+`~/.claude` directory:
+
+```bash
+git clone https://github.com/Tuvshuku/claude-usage-bot.git
+cd claude-usage-bot
+python3 collector.py --loop
+```
+
+It writes `~/.claude-widget/usage.json`. The animated desktop bot is currently
+Windows-only because it uses WPF; macOS and Linux would need a separate user
+interface.
 
 ## Live sync — the numbers are exact
 
@@ -238,34 +299,6 @@ Max subscription you are not billed this — it is a measure of how much work yo
 pushed through. Unknown models fall back to Opus-tier rates and set
 `cost_exact: false` in the JSON.
 
-## Using it
-
-It is a desktop pet. By default only the bot is on screen; the dashboard folds
-out of it.
-
-| Action | Result |
-| --- | --- |
-| **Click the bot** | Pop the usage dashboard open, click again to fold it away |
-| **Hover over it** | It hops, with `>` `<` eyes (2s cooldown so brushing past won't make it pogo) |
-| **Drag it** | Carry it anywhere — it wakes up, squints happily, wiggles, and tilts into the motion |
-| Right-click | Dashboard, wander on/off, jump, refresh, settings/calibration, data folder, quit |
-
-Left alone it wanders: strolls a short way (mirroring itself to face the
-direction it walks), stops to idle and breathe, and hops now and then — the
-ground shadow shrinks as it leaves the floor. It stands still while the
-dashboard is open, and stays put entirely if you untick **Let it wander**.
-
-The sprite is the Claude pixel mascot: flat rectangles rendered with
-`RenderOptions.EdgeMode="Aliased"` so the edges stay hard instead of being
-anti-aliased into mush. Eyes are plain bars normally and chevrons when it is
-pleased — hovered, dragged, or mid-hop.
-
-Its colour and face track the **highest** of the three gauges: Claude orange
-under 50%, deepening through amber to red above 90%, eyes shut with a `z` when
-you have been idle. Sleep holds a completely still pose until activity resumes.
-Position, wander setting, and whether the dashboard was open are all remembered
-between runs, including positions on secondary monitors.
-
 ## Configuration — `config.json`
 
 | Key | Default | Meaning |
@@ -285,19 +318,6 @@ between runs, including positions on secondary monitors.
 
 Restart after editing: close and reopen the native Windows app, or run
 `systemctl --user restart claude-usage-collector` in WSL mode.
-
-## macOS and Linux
-
-The headless collector works anywhere Python 3 and Claude Code use the standard
-`~/.claude` directory:
-
-```bash
-python3 collector.py --loop
-```
-
-It writes `~/.claude-widget/usage.json`. The animated desktop pet is currently
-Windows-only because its interface uses WPF; a macOS/Linux interface would need
-a separate cross-platform UI.
 
 ## Collector CLI
 
