@@ -1,6 +1,6 @@
 # claude-usage-bot
 
-A friendly always-on-top Claude Code usage bot for the Windows desktop. The
+A friendly always-on-top Claude Code usage monitoring bot for the Windows and Sub/linux desktop. The
 collector can run directly on Windows or inside WSL. It tracks the same three
 windows as `/usage`:
 **session** (5-hour block), **week**, and **fable** (weekly, Fable/Mythos-tier only).
